@@ -1,22 +1,38 @@
 # ==============================================
 #  FULL INVENTORY MANAGEMENT SYSTEM - FASTAPI
-#  SINGLE FILE BACKEND (IMS)
+#  (FULLY FIXED VERSION WITH ObjectId PATCHES)
 # ==============================================
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from datetime import datetime, timedelta
 from typing import List, Optional
 from jose import jwt, JWTError
 from passlib.context import CryptContext
 from bson import ObjectId
 from pymongo import MongoClient
+from fastapi.middleware.cors import CORSMiddleware
 
-# ==============================================
-#  CONFIGURATION
-# ==============================================
+# ---------------------------------------------------
+# 1️⃣ CREATE FASTAPI APP
+# ---------------------------------------------------
+app = FastAPI(title="Inventory Management System - Single File")
 
+# ---------------------------------------------------
+# 2️⃣ ENABLE CORS
+# ---------------------------------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], 
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---------------------------------------------------
+# 3️⃣ CONFIG
+# ---------------------------------------------------
 SECRET_KEY = "verysecretkey"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440
@@ -25,24 +41,28 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
 client = MongoClient(
-    "mongodb+srv://karthikeya0090rk3021_db_user:123@cluster0.u0rcats.mongodb.net/ims?retryWrites=true&w=majority&appName=Cluster0"
+    "mongodb+srv://karthikeya0090rk3021_db_user:123@cluster0.u0rcats.mongodb.net/ims?retryWrites=true&w=majority"
 )
-
 db = client["ims"]
 
-app = FastAPI(title="Inventory Management System - Single File")
+# ---------------------------------------------------
+# Utility – Fix ObjectId in MongoDB documents
+# ---------------------------------------------------
+def fix(doc):
+    doc["id"] = str(doc["_id"])
+    del doc["_id"]
+    return doc
 
-# ==============================================
-#  UTILITY FUNCTIONS
-# ==============================================
-
+# ---------------------------------------------------
+# AUTH HELPERS
+# ---------------------------------------------------
 def hash_password(password: str):
     return pwd_context.hash(password)
 
 def verify_password(password: str, hashed: str):
     return pwd_context.verify(password, hashed)
 
-def create_token(data: dict, expires_delta: timedelta = None):
+def create_token(data: dict, expires_delta=None):
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=15))
     to_encode.update({"exp": expire})
@@ -52,12 +72,13 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user = db.users.find_one({"_id": ObjectId(payload.get("id"))})
+
         if not user:
-            raise HTTPException(status_code=401, detail="Invalid user")
-        user["id"] = str(user["_id"])
-        return user
+            raise HTTPException(401, "Invalid user")
+
+        return fix(user)
     except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(401, "Invalid token")
 
 # ==============================================
 #  Pydantic Models
@@ -76,7 +97,7 @@ class Token(BaseModel):
 class Product(BaseModel):
     name: str
     sku: str
-    category: str = None
+    category: Optional[str] = None
     uom: str
     reorderPoint: int = 0
     reorderQty: int = 0
@@ -137,14 +158,14 @@ class Adjustment(BaseModel):
     lines: List[AdjustmentLine]
 
 # ==============================================
-# STOCK UTILITY FUNCTIONS
+# STOCK FUNCTIONS
 # ==============================================
 
 def update_stock(product, location, qty):
     db.stock.update_one(
         {"product": product, "location": location},
         {"$inc": {"qty": qty}},
-        upsert=True,
+        upsert=True
     )
 
 def add_ledger(product, fromLoc, toLoc, qty, type, ref, user):
@@ -160,7 +181,7 @@ def add_ledger(product, fromLoc, toLoc, qty, type, ref, user):
     })
 
 # ==============================================
-#  AUTH ENDPOINTS
+# AUTH ENDPOINTS
 # ==============================================
 
 @app.post("/signup", response_model=Token)
@@ -172,7 +193,7 @@ def signup(user: UserCreate):
         "name": user.name,
         "email": user.email,
         "password": hash_password(user.password),
-        "role": user.role,
+        "role": user.role
     }).inserted_id
 
     token = create_token({"id": str(uid)}, timedelta(days=7))
@@ -198,13 +219,11 @@ async def create_product(product: Product, user=Depends(get_current_user)):
 
 @app.get("/products")
 async def list_products(user=Depends(get_current_user)):
-    products = list(db.products.find())
-    for p in products:
-        p["id"] = str(p["_id"])
-    return products
+    items = [fix(x) for x in db.products.find()]
+    return items
 
 # ==============================================
-# WAREHOUSE & LOCATION ENDPOINTS
+# WAREHOUSE & LOCATION
 # ==============================================
 
 @app.post("/warehouses")
@@ -214,7 +233,7 @@ async def create_wh(wh: Warehouse, user=Depends(get_current_user)):
 
 @app.get("/warehouses")
 async def get_wh(user=Depends(get_current_user)):
-    return list(db.warehouses.find())
+    return [fix(x) for x in db.warehouses.find()]
 
 @app.post("/locations")
 async def create_location(loc: Location, user=Depends(get_current_user)):
@@ -223,13 +242,10 @@ async def create_location(loc: Location, user=Depends(get_current_user)):
 
 @app.get("/locations")
 async def get_locations(user=Depends(get_current_user)):
-    items = list(db.locations.find())
-    for x in items:
-        x["id"] = str(x["_id"])
-    return items
+    return [fix(x) for x in db.locations.find()]
 
 # ==============================================
-# RECEIPTS — INCOMING STOCK
+# RECEIPTS (INCOMING)
 # ==============================================
 
 @app.post("/receipts")
@@ -245,35 +261,31 @@ async def create_receipt(data: Receipt, user=Depends(get_current_user)):
 
 @app.get("/receipts")
 async def list_receipts(user=Depends(get_current_user)):
-    items = list(db.receipts.find())
-    for x in items:
-        x["id"] = str(x["_id"])
-    return items
+    return [fix(x) for x in db.receipts.find()]
 
 # ==============================================
-# DELIVERIES — OUTGOING STOCK
+# DELIVERIES (OUTGOING)
 # ==============================================
 
 @app.post("/deliveries")
-async def delivery(data: Delivery, user=Depends(get_current_user)):
+async def create_delivery(data: Delivery, user=Depends(get_current_user)):
     did = db.deliveries.insert_one(data.dict()).inserted_id
 
     for line in data.lines:
         update_stock(line.product, line.fromLocation, -line.qtyDelivered)
-        add_ledger(line.product, line.fromLocation, None, line.qtyDelivered,
-                   "DELIVERY", str(did), user["id"])
+        add_ledger(
+            line.product, line.fromLocation, None, line.qtyDelivered,
+            "DELIVERY", str(did), user["id"]
+        )
 
     return {"message": "Delivery processed", "id": str(did)}
 
 @app.get("/deliveries")
 async def list_deliveries(user=Depends(get_current_user)):
-    items = list(db.deliveries.find())
-    for x in items:
-        x["id"] = str(x["_id"])
-    return items
+    return [fix(x) for x in db.deliveries.find()]
 
 # ==============================================
-# INTERNAL TRANSFERS
+# TRANSFERS (INTERNAL)
 # ==============================================
 
 @app.post("/transfers")
@@ -283,20 +295,19 @@ async def transfer(data: Transfer, user=Depends(get_current_user)):
     for line in data.lines:
         update_stock(line.product, line.fromLocation, -line.qty)
         update_stock(line.product, line.toLocation, line.qty)
-        add_ledger(line.product, line.fromLocation, line.toLocation,
-                   line.qty, "TRANSFER", str(tid), user["id"])
+        add_ledger(
+            line.product, line.fromLocation, line.toLocation, line.qty,
+            "TRANSFER", str(tid), user["id"]
+        )
 
     return {"message": "Transfer completed", "id": str(tid)}
 
 @app.get("/transfers")
 async def list_transfers(user=Depends(get_current_user)):
-    items = list(db.transfers.find())
-    for x in items:
-        x["id"] = str(x["_id"])
-    return items
+    return [fix(x) for x in db.transfers.find()]
 
 # ==============================================
-# STOCK ADJUSTMENTS
+# ADJUSTMENTS
 # ==============================================
 
 @app.post("/adjustments")
@@ -306,8 +317,8 @@ async def adjust(data: Adjustment, user=Depends(get_current_user)):
     for line in data.lines:
         record = db.stock.find_one({"product": line.product, "location": line.location})
         curr = record["qty"] if record else 0
-        diff = line.countedQty - curr
 
+        diff = line.countedQty - curr
         if diff != 0:
             update_stock(line.product, line.location, diff)
             add_ledger(
@@ -324,31 +335,22 @@ async def adjust(data: Adjustment, user=Depends(get_current_user)):
 
 @app.get("/adjustments")
 async def list_adjustments(user=Depends(get_current_user)):
-    items = list(db.adjustments.find())
-    for x in items:
-        x["id"] = str(x["_id"])
-    return items
+    return [fix(x) for x in db.adjustments.find()]
 
 # ==============================================
-# STOCK AND LEDGER QUERIES
+# STOCK & LEDGER
 # ==============================================
 
 @app.get("/stock")
 async def stock(user=Depends(get_current_user)):
-    items = list(db.stock.find())
-    for x in items:
-        x["id"] = str(x["_id"])
-    return items
+    return [fix(x) for x in db.stock.find()]
 
 @app.get("/ledger")
 async def ledger(user=Depends(get_current_user)):
-    items = list(db.ledger.find().sort("at", -1))
-    for x in items:
-        x["id"] = str(x["_id"])
-    return items
+    return [fix(x) for x in db.ledger.find().sort("at", -1)]
 
 # ==============================================
-# DASHBOARD KPIs
+# DASHBOARD
 # ==============================================
 
 @app.get("/dashboard")
@@ -361,22 +363,18 @@ async def dashboard(user=Depends(get_current_user)):
     out = 0
 
     for p in products:
-        levels = [s["qty"] for s in stock if s["product"] == p["sku"]]
-        total = sum(levels) if levels else 0
+        qtys = [s["qty"] for s in stock if s["product"] == p["sku"]]
+        total = sum(qtys) if qtys else 0
 
         if total == 0:
             out += 1
         elif total <= p.get("reorderPoint", 0):
             low += 1
 
-    pending_receipts = db.receipts.count_documents({})
-    pending_deliveries = db.deliveries.count_documents({})
-    pending_transfers = db.transfers.count_documents({})
-
     return {
         "lowStock": low,
         "outOfStock": out,
-        "pendingReceipts": pending_receipts,
-        "pendingDeliveries": pending_deliveries,
-        "pendingTransfers": pending_transfers
+        "pendingReceipts": db.receipts.count_documents({}),
+        "pendingDeliveries": db.deliveries.count_documents({}),
+        "pendingTransfers": db.transfers.count_documents({})
     }
