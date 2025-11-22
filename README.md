@@ -1,72 +1,172 @@
-# odooXhack2025
+🚀 Inventory Management System (IMS)
 
-**📦 Inventory Management System (IMS)
-FastAPI • MongoDB • TailwindCSS • Single-Page Frontend
+A full-stack Inventory Management System built using FastAPI (Python), MongoDB, and a Tailwind + JavaScript frontend, designed to handle products, warehouses, stock movement, receipts, deliveries, transfers, adjustments, authentication, RBAC, OTP reset, and user activity tracking.
 
-A modern, full-stack Inventory Management System built using FastAPI (backend) and a single-page TailwindCSS frontend, featuring user authentication, RBAC, stock control, product cataloging, warehouse/location tracking, inward/outward operations, adjustments, and a complete user profile system with avatar upload.
+👥 Team Details
+Team Leader
+Field	Details
+Name	Annem Surendra Raja Karthikeya
+Email	2320040137ece@gmail.com
 
-⭐ Features
-🔐 Authentication & User Security
+Phone	6309332648
+Passing Year	2027
+Discord Server	https://discord.gg/sNNFAy2a3q
+Reviewer
 
-Secure JWT login & signup
+Aman Patel (ampa)
 
-Password hashing (Bcrypt)
+👨‍👩‍👧‍👦 Team Members
+Team Member 1
+Field	Details
+Name	Vanamala Apoorva
+Email	2320040064ece@gmail.com
 
-OTP-based password reset
+Phone	9398898161
+Passing Year	2027
+Team Member 2
 
-Change password module
+🧩 Problem Statement - Stock Master
 
-Activity logging
+To design and develop a robust Inventory Management System that provides complete visibility and control over stock across multiple warehouses.
 
-User profile with avatar upload
-
-🗂️ Role-Based Access Control (RBAC)
-Role	Access Level
-STOCK_MASTER	Full access to all modules
-INVENTORY_MANAGER	Products, Receipts, Deliveries
-WAREHOUSE_STAFF	Stock, Adjustments, Transfers
-📦 Inventory Features
-
-Product master management
-
-Warehouse & location creation
-
-Goods Inward (Receipts)
-
-Goods Outward (Deliveries)
-
-Internal Transfers
-
-Stock Adjustments
+The solution should enable:
 
 Real-time stock updates
 
-Movement ledger with full audit
+Product catalog management
 
-📊 Dashboard Analytics
+Incoming goods (Receipts)
 
-Low stock indicator
+Outgoing goods (Deliveries)
 
-Out-of-stock products
+Internal stock transfers
 
-Pending receipts/deliveries/transfers
+Stock adjustments
 
-Recent movement preview
+User authentication and roles
 
-🧱 Tech Stack
+Activity logging and audit trail
 
-Backend: FastAPI, MongoDB, JWT, Passlib
-Frontend: HTML, TailwindCSS, Vanilla JS
-Architecture: REST API + SPA
-Database: MongoDB Atlas / Local
+Secure password reset with OTP
 
-🏗️ Architecture Diagram
-Frontend (HTML + JS SPA)
-            |
-            ▼
-     FastAPI Backend
-  Auth • Stock • Ledger • CRUD
-            |
-            ▼
-      MongoDB Database
-**
+User profile with avatar uploads
+
+This system ensures accuracy, prevents stock mismatches, and helps organizations streamline warehouse operations.
+
+🎯 Key Features
+🔐 Authentication
+
+Login / Signup with JWT
+
+OTP-based password reset
+
+Role-Based Access Control (RBAC)
+
+👤 User Profile
+
+View profile
+
+Upload avatar
+
+Change password
+
+Activity tracking
+
+📦 Inventory Operations
+
+Product creation and management
+
+Warehouse and location setup
+
+Stock movement ledger
+
+Dashboard analytics
+
+📥 Receipts
+
+Add incoming goods
+
+Auto stock increment
+
+Ledger records
+
+📤 Deliveries
+
+Outgoing shipments
+
+Auto stock decrement
+
+Ledger records
+
+🔁 Internal Transfers
+
+Move stock between warehouses or racks
+
+Location-based updates
+
+⚠️ Adjustments
+
+Fix stock mismatch
+
+Reason-tracking
+
+Ledger update
+
+📊 Dashboard
+
+Low stock items
+
+Out-of-stock
+
+Total products
+
+Pending operations overview
+
+📺 Functional Video Link
+
+(Upload to YouTube/Drive and paste here)
+👉 https://your-video-link.com
+
+🛠 Tech Stack
+Layer	Technology
+Frontend	HTML, TailwindCSS, JavaScript
+Backend	FastAPI (Python)
+Database	MongoDB Atlas
+Auth	JWT
+Deployment	Localhost for now
+📂 Project Structure
+/backend
+  └── main.py  (Full FastAPI backend in single file)
+  
+/frontend
+  └── index.html  (Full Tailwind + JS frontend)
+
+🚀 How to Run
+Start Backend
+cd backend
+uvicorn main:app --reload
+
+
+Runs on: http://127.0.0.1:8000
+
+Start Frontend
+cd frontend
+python -m http.server 5500
+
+
+Website: http://127.0.0.1:5500
+
+📝 Notes for Odoo Submission
+
+✔ Add this README to your GitHub repo
+✔ Add repo link to the Odoo portal
+✔ Make sure the functional video is uploaded & linked
+✔ Ensure repo is public or accessible to evaluators
+
+📞 Contact
+
+If you have any questions, please reach out:
+
+📧 2320040137ece@gmail.com
+
+📱 6309332648
