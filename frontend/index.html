@@ -27,11 +27,12 @@
 <script>
 const API = "http://localhost:8000";
 
-// =============== SIMPLE STATE HELPERS =================
+// =============== GLOBAL STATE ==================
 let state = {
   token: localStorage.getItem("token") || null,
-  currentView: "dashboard", // dashboard, products, receipts, deliveries, transfers, adjustments, stock, ledger, settings, profile
+  currentView: "dashboard",
   dashboard: null,
+  me: null,            // <--- NEW (user profile)
   products: [],
   warehouses: [],
   locations: [],
@@ -49,7 +50,7 @@ let state = {
   },
 };
 
-// =============== HTTP HELPERS =========================
+// =============== API HELPER ====================
 async function api(path, options = {}) {
   const headers = options.headers || {};
   if (!options.noAuth && state.token) {
@@ -70,31 +71,28 @@ async function api(path, options = {}) {
     try {
       const data = await res.json();
       message = data.detail || data.message || message;
-    } catch { }
+    } catch {}
     throw new Error(message);
   }
   try { return await res.json(); } catch { return null; }
 }
 
-// =============== AUTH LOGIC ===========================
+// =============== LOGIN =========================
 
 async function handleLogin(e) {
   e.preventDefault();
-  const email = document.getElementById("loginEmail").value;
-  const password = document.getElementById("loginPassword").value;
+  const email = loginEmail.value;
+  const password = loginPassword.value;
 
   const formData = new FormData();
   formData.append("username", email);
   formData.append("password", password);
 
   try {
-    const data = await api("/login", {
-      method: "POST",
-      body: formData,
-      noAuth: true
-    });
+    const data = await api("/login", { method: "POST", body: formData, noAuth: true });
     state.token = data.access_token;
     localStorage.setItem("token", state.token);
+
     await loadAllData();
     render();
   } catch (err) {
@@ -102,12 +100,14 @@ async function handleLogin(e) {
   }
 }
 
+// =============== SIGNUP ========================
+
 async function handleSignup(e) {
   e.preventDefault();
-  const name = document.getElementById("signupName").value;
-  const email = document.getElementById("signupEmail").value;
-  const password = document.getElementById("signupPassword").value;
-  const role = document.getElementById("signupRole").value;
+  const name = signupName.value;
+  const email = signupEmail.value;
+  const password = signupPassword.value;
+  const role = signupRole.value;
 
   try {
     const data = await api("/signup", {
@@ -116,8 +116,10 @@ async function handleSignup(e) {
       body: JSON.stringify({ name, email, password, role }),
       noAuth: true
     });
+
     state.token = data.access_token;
     localStorage.setItem("token", state.token);
+
     await loadAllData();
     render();
   } catch (err) {
@@ -131,28 +133,30 @@ function logout() {
   render();
 }
 
-// OTP
+// ===== OTP ======
+
 async function handleRequestOTP(e) {
   e.preventDefault();
-  const email = document.getElementById("otpEmail").value;
   try {
+    const email = otpEmail.value;
     const data = await api("/request-reset-otp", {
       method: "POST",
       json: true,
       body: JSON.stringify({ email }),
       noAuth: true
     });
-    alert("OTP generated (for demo): " + data.otp);
+    alert("OTP: " + data.otp);
   } catch (err) {
-    alert("OTP request failed: " + err.message);
+    alert(err.message);
   }
 }
 
 async function handleResetPassword(e) {
   e.preventDefault();
-  const email = document.getElementById("otpEmail").value;
-  const otp = document.getElementById("otpCode").value;
-  const newPassword = document.getElementById("otpNewPassword").value;
+  const email = otpEmail.value;
+  const otp = otpCode.value;
+  const newPassword = otpNewPassword.value;
+
   try {
     await api("/reset-password", {
       method: "POST",
@@ -160,16 +164,18 @@ async function handleResetPassword(e) {
       body: JSON.stringify({ email, otp, newPassword }),
       noAuth: true
     });
-    alert("Password reset successful, please login.");
+    alert("Password reset, login again.");
   } catch (err) {
-    alert("Reset failed: " + err.message);
+    alert(err.message);
   }
 }
 
-// =============== DATA LOADERS =========================
+
+// =============== LOAD ALL ======================
 
 async function loadAllData() {
   try {
+    state.me = await api("/me");       // <---- NEW 🎉
     state.dashboard = await api("/dashboard");
     state.products = await api("/products");
     state.warehouses = await api("/warehouses");
@@ -181,11 +187,532 @@ async function loadAllData() {
     state.stock = await api("/stock");
     state.ledger = await api("/ledger");
   } catch (err) {
-    console.error("Load error", err);
+    console.error("Load error:", err);
   }
 }
 
-// =============== SIMPLE FORM HANDLERS =================
+// ======================================================
+// =============== VIEW HELPERS =========================
+// ======================================================
+
+function updateFilter(key, value) {
+  state.filters[key] = value;
+  render();
+}
+
+function setView(view) {
+  state.currentView = view;
+  render();
+}
+
+
+// ======================================================
+// =================== DASHBOARD ========================
+// ======================================================
+
+function renderDashboard() {
+  const d = state.dashboard || {
+    lowStock: 0,
+    outOfStock: 0,
+    pendingReceipts: 0,
+    pendingDeliveries: 0,
+    pendingTransfers: 0
+  };
+
+  return `
+    <h2 class="text-xl font-semibold mb-2">Dashboard</h2>
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+      ${renderKpi("Total Products", state.products.length)}
+      ${renderKpi("Low Stock", d.lowStock)}
+      ${renderKpi("Out of Stock", d.outOfStock)}
+      ${renderKpi("Receipts", d.pendingReceipts)}
+      ${renderKpi("Deliveries", d.pendingDeliveries)}
+      ${renderKpi("Transfers", d.pendingTransfers)}
+    </div>
+
+    <div class="bg-white rounded-xl shadow p-4">
+      <h3 class="text-sm font-semibold mb-2">Recent Movements</h3>
+      <div class="overflow-x-auto max-h-64">
+        <table class="min-w-full text-xs">
+          <thead>
+            <tr class="bg-slate-100">
+              <th class="px-2 py-1 text-left">Type</th>
+              <th class="px-2 py-1 text-left">Product</th>
+              <th class="px-2 py-1 text-left">From</th>
+              <th class="px-2 py-1 text-left">To</th>
+              <th class="px-2 py-1 text-left">Qty</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${state.ledger.slice(0,10).map(x => `
+              <tr class="border-t">
+                <td class="px-2 py-1">${x.type}</td>
+                <td class="px-2 py-1">${x.product}</td>
+                <td class="px-2 py-1">${x.fromLocation || "-"}</td>
+                <td class="px-2 py-1">${x.toLocation || "-"}</td>
+                <td class="px-2 py-1">${x.qty}</td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function renderKpi(name, value) {
+  return `
+    <div class="bg-white rounded-xl shadow p-4">
+      <div class="text-xs text-slate-500">${name}</div>
+      <div class="text-2xl font-semibold">${value}</div>
+    </div>
+  `;
+}
+
+
+// ======================================================
+// ==================== PRODUCTS ========================
+// ======================================================
+
+function renderProducts() {
+  return `
+    <div class="flex flex-col md:flex-row gap-4">
+
+      <div class="flex-1">
+        <h2 class="text-xl font-semibold mb-2">Products</h2>
+        <div class="bg-white rounded-xl shadow overflow-x-auto">
+          <table class="min-w-full text-xs">
+            <thead class="bg-slate-100">
+              <tr>
+                <th class="px-2 py-2 text-left">Name</th>
+                <th class="px-2 py-2 text-left">SKU</th>
+                <th class="px-2 py-2 text-left">Category</th>
+                <th class="px-2 py-2 text-left">UoM</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${state.products.map(p => `
+                <tr class="border-t">
+                  <td class="px-2 py-1">${p.name}</td>
+                  <td class="px-2 py-1">${p.sku}</td>
+                  <td class="px-2 py-1">${p.category || "-"}</td>
+                  <td class="px-2 py-1">${p.uom}</td>
+                </tr>`).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="w-full md:w-80 bg-white rounded-xl shadow p-4">
+        <h3 class="font-semibold text-sm mb-2">Add Product</h3>
+        <form onsubmit="handleCreateProduct(event)" class="space-y-2 text-xs">
+          <input id="prodName" class="w-full border rounded px-2 py-1.5" placeholder="Name" required />
+          <input id="prodSku" class="w-full border rounded px-2 py-1.5" placeholder="SKU" required />
+          <input id="prodCategory" class="w-full border rounded px-2 py-1.5" placeholder="Category" />
+          <input id="prodUom" class="w-full border rounded px-2 py-1.5" placeholder="Unit" required />
+          <input id="prodReorderPoint" type="number" class="w-full border rounded px-2 py-1.5" placeholder="Reorder Point" />
+          <input id="prodReorderQty" type="number" class="w-full border rounded px-2 py-1.5" placeholder="Reorder Qty" />
+          <button class="w-full bg-primary text-white py-1.5 rounded">Save</button>
+        </form>
+      </div>
+
+    </div>
+  `;
+}
+
+
+// ======================================================
+// ===================== RECEIPTS =======================
+// ======================================================
+
+function renderReceipts() {
+  return `
+    <h2 class="text-xl font-semibold mb-3">Receipts</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+      <div class="bg-white rounded-xl shadow p-4 overflow-x-auto">
+        <table class="min-w-full text-xs">
+          <thead class="bg-slate-100">
+            <tr>
+              <th class="px-2 py-2 text-left">Doc#</th>
+              <th class="px-2 py-2 text-left">Supplier</th>
+              <th class="px-2 py-2 text-left">Warehouse</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${state.receipts.map(r => `
+              <tr class="border-t">
+                <td class="px-2 py-1">${r.docNumber}</td>
+                <td class="px-2 py-1">${r.supplierName || "-"}</td>
+                <td class="px-2 py-1">${r.warehouse}</td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="bg-white rounded-xl shadow p-4">
+        <h3 class="text-sm font-semibold mb-2">New Receipt</h3>
+        <form onsubmit="handleCreateReceipt(event)" class="space-y-2 text-xs">
+          <input id="rcSupplier" class="w-full border rounded px-2 py-1.5" placeholder="Supplier" />
+          <input id="rcDocNumber" class="w-full border rounded px-2 py-1.5" placeholder="Doc Number" required />
+          <input id="rcWarehouse" class="w-full border rounded px-2 py-1.5" placeholder="Warehouse" required />
+          <input id="rcProduct" class="w-full border rounded px-2 py-1.5" placeholder="Product SKU" required />
+          <input id="rcLocation" class="w-full border rounded px-2 py-1.5" placeholder="Location" required />
+          <input id="rcQtyOrdered" type="number" class="w-full border rounded px-2 py-1.5" placeholder="Qty Ordered" />
+          <input id="rcQtyReceived" type="number" class="w-full border rounded px-2 py-1.5" placeholder="Qty Received" />
+          <button class="w-full bg-primary text-white py-1.5 rounded">Create</button>
+        </form>
+      </div>
+
+    </div>
+  `;
+}
+
+
+// ======================================================
+// ===================== DELIVERIES =====================
+// ======================================================
+
+function renderDeliveries() {
+  return `
+    <h2 class="text-xl font-semibold mb-3">Deliveries</h2>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+      <div class="bg-white rounded-xl shadow p-4 overflow-x-auto">
+        <table class="min-w-full text-xs">
+          <thead class="bg-slate-100">
+            <tr>
+              <th class="px-2 py-2 text-left">Doc#</th>
+              <th class="px-2 py-2 text-left">Customer</th>
+              <th class="px-2 py-2 text-left">Warehouse</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${state.deliveries.map(d => `
+              <tr class="border-t">
+                <td class="px-2 py-1">${d.docNumber}</td>
+                <td class="px-2 py-1">${d.customerName || "-"}</td>
+                <td class="px-2 py-1">${d.warehouse}</td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="bg-white rounded-xl shadow p-4">
+        <h3 class="text-sm font-semibold mb-2">New Delivery</h3>
+        <form onsubmit="handleCreateDelivery(event)" class="space-y-2 text-xs">
+          <input id="dlCustomer" class="w-full border rounded px-2 py-1.5" placeholder="Customer" />
+          <input id="dlDocNumber" class="w-full border rounded px-2 py-1.5" placeholder="Doc Number" required />
+          <input id="dlWarehouse" class="w-full border rounded px-2 py-1.5" placeholder="Warehouse" required />
+          <input id="dlProduct" class="w-full border rounded px-2 py-1.5" placeholder="Product SKU" required />
+          <input id="dlLocation" class="w-full border rounded px-2 py-1.5" placeholder="Location" required />
+          <input id="dlQtyPlanned" type="number" class="w-full border rounded px-2 py-1.5" placeholder="Qty Planned" />
+          <input id="dlQtyDelivered" type="number" class="w-full border rounded px-2 py-1.5" placeholder="Qty Delivered" />
+          <button class="w-full bg-primary text-white py-1.5 rounded">Create</button>
+        </form>
+      </div>
+
+    </div>
+  `;
+}
+
+
+// ======================================================
+// ====================== TRANSFERS ======================
+// ======================================================
+
+function renderTransfers() {
+  return `
+    <h2 class="text-xl font-semibold mb-3">Transfers</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+      <div class="bg-white rounded-xl shadow p-4 overflow-x-auto">
+        <table class="min-w-full text-xs">
+          <thead class="bg-slate-100">
+            <tr>
+              <th class="px-2 py-2 text-left">From WH</th>
+              <th class="px-2 py-2 text-left">To WH</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${state.transfers.map(t => `
+              <tr class="border-t">
+                <td class="px-2 py-1">${t.fromWarehouse}</td>
+                <td class="px-2 py-1">${t.toWarehouse}</td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="bg-white rounded-xl shadow p-4">
+        <h3 class="text-sm font-semibold mb-2">New Transfer</h3>
+        <form onsubmit="handleCreateTransfer(event)" class="space-y-2 text-xs">
+          <input id="trFromWh" class="w-full border rounded px-2 py-1.5" placeholder="From Warehouse" required />
+          <input id="trToWh" class="w-full border rounded px-2 py-1.5" placeholder="To Warehouse" required />
+          <input id="trProduct" class="w-full border rounded px-2 py-1.5" placeholder="Product SKU" required />
+          <input id="trFromLoc" class="w-full border rounded px-2 py-1.5" placeholder="From Location" required />
+          <input id="trToLoc" class="w-full border rounded px-2 py-1.5" placeholder="To Location" required />
+          <input id="trQty" type="number" class="w-full border rounded px-2 py-1.5" placeholder="Qty" />
+          <button class="w-full bg-primary text-white py-1.5 rounded">Create</button>
+        </form>
+      </div>
+
+    </div>
+  `;
+}
+
+
+// ======================================================
+// ==================== ADJUSTMENTS ======================
+// ======================================================
+
+function renderAdjustments() {
+  return `
+    <h2 class="text-xl font-semibold mb-3">Adjustments</h2>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+      <div class="bg-white rounded-xl shadow p-4 overflow-x-auto">
+        <table class="min-w-full text-xs">
+          <thead class="bg-slate-100">
+            <tr>
+              <th class="px-2 py-2 text-left">Warehouse</th>
+              <th class="px-2 py-2 text-left">Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${state.adjustments.map(a => `
+              <tr class="border-t">
+                <td class="px-2 py-1">${a.warehouse}</td>
+                <td class="px-2 py-1">${a.reason || "-"}</td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="bg-white rounded-xl shadow p-4">
+        <h3 class="text-sm font-semibold mb-2">New Adjustment</h3>
+        <form onsubmit="handleCreateAdjustment(event)" class="space-y-2 text-xs">
+          <input id="adWarehouse" class="w-full border rounded px-2 py-1.5" placeholder="Warehouse" required />
+          <input id="adReason" class="w-full border rounded px-2 py-1.5" placeholder="Reason" />
+          <input id="adProduct" class="w-full border rounded px-2 py-1.5" placeholder="Product SKU" required />
+          <input id="adLocation" class="w-full border rounded px-2 py-1.5" placeholder="Location" required />
+          <input id="adCountedQty" type="number" class="w-full border rounded px-2 py-1.5" placeholder="Counted Qty" />
+          <button class="w-full bg-primary text-white py-1.5 rounded">Apply</button>
+        </form>
+      </div>
+
+    </div>
+  `;
+}
+
+
+// ======================================================
+// ======================== STOCK ========================
+// ======================================================
+
+function renderStock() {
+  return `
+    <h2 class="text-xl font-semibold mb-3">Stock</h2>
+    <div class="bg-white rounded-xl shadow overflow-x-auto">
+      <table class="min-w-full text-xs">
+        <thead class="bg-slate-100">
+          <tr>
+            <th class="px-2 py-2 text-left">Product</th>
+            <th class="px-2 py-2 text-left">Location</th>
+            <th class="px-2 py-2 text-left">Qty</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${state.stock.map(s => `
+            <tr class="border-t">
+              <td class="px-2 py-1">${s.product}</td>
+              <td class="px-2 py-1">${s.location}</td>
+              <td class="px-2 py-1">${s.qty}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+
+// ======================================================
+// ======================== LEDGER =======================
+// ======================================================
+
+function renderLedger() {
+  return `
+    <h2 class="text-xl font-semibold mb-3">Ledger</h2>
+    <div class="bg-white rounded-xl shadow overflow-x-auto max-h-[500px]">
+      <table class="min-w-full text-xs">
+        <thead class="bg-slate-100">
+          <tr>
+            <th class="px-2 py-2 text-left">Type</th>
+            <th class="px-2 py-2 text-left">Product</th>
+            <th class="px-2 py-2 text-left">From</th>
+            <th class="px-2 py-2 text-left">To</th>
+            <th class="px-2 py-2 text-left">Qty</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${state.ledger.map(l => `
+            <tr class="border-t">
+              <td class="px-2 py-1">${l.type}</td>
+              <td class="px-2 py-1">${l.product}</td>
+              <td class="px-2 py-1">${l.fromLocation || "-"}</td>
+              <td class="px-2 py-1">${l.toLocation || "-"}</td>
+              <td class="px-2 py-1">${l.qty}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+
+// ======================================================
+// ====================== SETTINGS =======================
+// ======================================================
+
+function renderSettings() {
+  return `
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+      <div class="bg-white rounded-xl shadow p-4">
+        <h3 class="text-sm font-semibold mb-2">Warehouses</h3>
+        <ul class="text-xs mb-3">
+          ${state.warehouses.map(w => `
+            <li>- ${w.name} (${w.code})</li>`).join("")}
+        </ul>
+
+        <form onsubmit="handleCreateWarehouse(event)" class="space-y-2 text-xs">
+          <input id="whName" class="w-full border rounded px-2 py-1.5" placeholder="Name" required />
+          <input id="whCode" class="w-full border rounded px-2 py-1.5" placeholder="Code" required />
+          <input id="whAddress" class="w-full border rounded px-2 py-1.5" placeholder="Address" />
+          <button class="w-full bg-primary text-white py-1.5 rounded">Add</button>
+        </form>
+      </div>
+
+      <div class="bg-white rounded-xl shadow p-4">
+        <h3 class="text-sm font-semibold mb-2">Locations</h3>
+        <ul class="text-xs mb-3 max-h-32 overflow-y-auto">
+          ${state.locations.map(l => `
+            <li>- ${l.name} (${l.code}) in ${l.warehouse}</li>`).join("")}
+        </ul>
+
+        <form onsubmit="handleCreateLocation(event)" class="space-y-2 text-xs">
+          <input id="locName" class="w-full border rounded px-2 py-1.5" placeholder="Name" required />
+          <input id="locCode" class="w-full border rounded px-2 py-1.5" placeholder="Code" required />
+          <input id="locWarehouse" class="w-full border rounded px-2 py-1.5" placeholder="Warehouse" required />
+          <button class="w-full bg-primary text-white py-1.5 rounded">Add</button>
+        </form>
+      </div>
+    </div>
+  `;
+}
+
+
+// ======================================================
+// ===================== NEW PROFILE =====================
+// ======================================================
+
+function renderProfile() {
+  const me = state.me;
+
+  if (!me) return `<p class="text-slate-500">Loading...</p>`;
+
+  return `
+    <div class="max-w-lg bg-white rounded-xl shadow p-6">
+
+      <h2 class="text-xl font-semibold mb-4">My Profile</h2>
+
+      <!-- Avatar -->
+      <div class="flex items-center gap-4 mb-6">
+        <img src="${API + me.avatarUrl}" 
+             onerror="this.src='https://placehold.co/100x100?text=NO+IMG'"
+             class="w-24 h-24 rounded-full border shadow object-cover" />
+
+        <form onsubmit="uploadAvatar(event)" class="text-xs space-y-2">
+          <input id="avatarFile" type="file" accept="image/*" class="text-xs" required />
+          <button class="block bg-primary text-white px-3 py-1 rounded">Upload</button>
+        </form>
+      </div>
+
+      <!-- Info -->
+      <div class="space-y-2 text-sm">
+        <p><b>Name:</b> ${me.name}</p>
+        <p><b>Email:</b> ${me.email}</p>
+        <p><b>Role:</b> ${me.role}</p>
+      </div>
+
+      <!-- Divider -->
+      <hr class="my-4">
+
+      <!-- Change Password -->
+      <h3 class="font-semibold text-sm mb-2">Change Password</h3>
+      <form onsubmit="changePassword(event)" class="space-y-2 text-xs">
+        <input id="oldPwd" type="password" class="w-full border rounded px-2 py-1.5" placeholder="Old Password" required />
+        <input id="newPwd" type="password" class="w-full border rounded px-2 py-1.5" placeholder="New Password" required />
+        <button class="w-full bg-primary text-white py-1.5 rounded">Update Password</button>
+      </form>
+
+    </div>
+  `;
+}
+
+
+// ======================================================
+// ========== PROFILE FUNCTIONS (UPLOAD + PASSWORD) ======
+// ======================================================
+
+async function uploadAvatar(e) {
+  e.preventDefault();
+
+  const fileInput = document.getElementById("avatarFile");
+  if (!fileInput.files.length) return alert("Choose a file");
+
+  const formData = new FormData();
+  formData.append("file", fileInput.files[0]);
+
+  try {
+    const data = await api("/profile/avatar", {
+      method: "POST",
+      body: formData
+    });
+
+    alert("Avatar updated!");
+
+    await loadAllData();
+    render();
+
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+async function changePassword(e) {
+  e.preventDefault();
+
+  const oldPassword = oldPwd.value;
+  const newPassword = newPwd.value;
+
+  try {
+    await api("/change-password", {
+      method: "POST",
+      json: true,
+      body: JSON.stringify({ oldPassword, newPassword })
+    });
+
+    alert("Password updated!");
+
+  } catch (err) {
+    alert(err.message);
+  }
+}
+// ======================================================
+// ============ SIMPLE FORM HANDLERS (CRUD) =============
+// ======================================================
 
 async function handleCreateProduct(e) {
   e.preventDefault();
@@ -204,6 +731,7 @@ async function handleCreateProduct(e) {
     });
     alert("Product created");
     state.products = await api("/products");
+    state.dashboard = await api("/dashboard");
     render();
   } catch (err) {
     alert("Error: " + err.message);
@@ -215,6 +743,7 @@ async function handleCreateWarehouse(e) {
   const name = document.getElementById("whName").value;
   const code = document.getElementById("whCode").value;
   const address = document.getElementById("whAddress").value;
+
   try {
     await api("/warehouses", {
       method: "POST",
@@ -234,6 +763,7 @@ async function handleCreateLocation(e) {
   const name = document.getElementById("locName").value;
   const code = document.getElementById("locCode").value;
   const warehouse = document.getElementById("locWarehouse").value;
+
   try {
     await api("/locations", {
       method: "POST",
@@ -248,7 +778,6 @@ async function handleCreateLocation(e) {
   }
 }
 
-// Receipts (incoming)
 async function handleCreateReceipt(e) {
   e.preventDefault();
   const supplierName = document.getElementById("rcSupplier").value;
@@ -263,7 +792,6 @@ async function handleCreateReceipt(e) {
     supplierName,
     docNumber,
     warehouse,
-    status: "DONE",
     lines: [{ product, location, qtyOrdered, qtyReceived }]
   };
 
@@ -273,7 +801,7 @@ async function handleCreateReceipt(e) {
       json: true,
       body: JSON.stringify(payload)
     });
-    alert("Receipt created (+stock)");
+    alert("Receipt created");
     state.receipts = await api("/receipts");
     state.stock = await api("/stock");
     state.ledger = await api("/ledger");
@@ -284,7 +812,6 @@ async function handleCreateReceipt(e) {
   }
 }
 
-// Deliveries
 async function handleCreateDelivery(e) {
   e.preventDefault();
   const customerName = document.getElementById("dlCustomer").value;
@@ -299,7 +826,6 @@ async function handleCreateDelivery(e) {
     customerName,
     docNumber,
     warehouse,
-    status: "DONE",
     lines: [{ product, fromLocation, qtyPlanned, qtyDelivered }]
   };
 
@@ -309,7 +835,7 @@ async function handleCreateDelivery(e) {
       json: true,
       body: JSON.stringify(payload)
     });
-    alert("Delivery created (-stock)");
+    alert("Delivery created");
     state.deliveries = await api("/deliveries");
     state.stock = await api("/stock");
     state.ledger = await api("/ledger");
@@ -320,7 +846,6 @@ async function handleCreateDelivery(e) {
   }
 }
 
-// Transfers
 async function handleCreateTransfer(e) {
   e.preventDefault();
   const fromWarehouse = document.getElementById("trFromWh").value;
@@ -333,7 +858,6 @@ async function handleCreateTransfer(e) {
   const payload = {
     fromWarehouse,
     toWarehouse,
-    status: "DONE",
     lines: [{ product, fromLocation, toLocation, qty }]
   };
 
@@ -343,17 +867,17 @@ async function handleCreateTransfer(e) {
       json: true,
       body: JSON.stringify(payload)
     });
-    alert("Transfer done");
+    alert("Transfer created");
     state.transfers = await api("/transfers");
     state.stock = await api("/stock");
     state.ledger = await api("/ledger");
+    state.dashboard = await api("/dashboard");
     render();
   } catch (err) {
     alert("Error: " + err.message);
   }
 }
 
-// Adjustments
 async function handleCreateAdjustment(e) {
   e.preventDefault();
   const warehouse = document.getElementById("adWarehouse").value;
@@ -365,7 +889,6 @@ async function handleCreateAdjustment(e) {
   const payload = {
     warehouse,
     reason,
-    status: "DONE",
     lines: [{ product, location, countedQty }]
   };
 
@@ -386,7 +909,10 @@ async function handleCreateAdjustment(e) {
   }
 }
 
-// =============== VIEWS (HTML STRING BUILDERS) =========
+
+// ======================================================
+// ================== LOGIN / SIGNUP UI =================
+// ======================================================
 
 function renderLoginSignup() {
   return `
@@ -409,7 +935,7 @@ function renderLoginSignup() {
         <form onsubmit="handleLogin(event)" class="space-y-3 text-sm">
           <div>
             <label class="block text-xs font-medium text-slate-700 mb-1">Email</label>
-            <input id="loginEmail" class="w-full border rounded px-3 py-2 text-sm" required />
+            <input id="loginEmail" type="email" class="w-full border rounded px-3 py-2 text-sm" required />
           </div>
           <div>
             <label class="block text-xs font-medium text-slate-700 mb-1">Password</label>
@@ -423,12 +949,12 @@ function renderLoginSignup() {
         <div class="mt-4 border-t pt-3">
           <p class="text-xs text-slate-500 mb-2">Forgot Password? Use OTP Reset:</p>
           <form onsubmit="handleResetPassword(event)" class="space-y-2 text-xs">
-            <input id="otpEmail" class="w-full border rounded px-2 py-1.5" placeholder="Email" />
-            <button onclick="handleRequestOTP(event)" class="w-full bg-slate-800 text-white py-1.5 rounded mb-2">
+            <input id="otpEmail" type="email" class="w-full border rounded px-2 py-1.5" placeholder="Email" required />
+            <button type="button" onclick="handleRequestOTP(event)" class="w-full bg-slate-800 text-white py-1.5 rounded mb-2">
               Request OTP
             </button>
-            <input id="otpCode" class="w-full border rounded px-2 py-1.5" placeholder="OTP Code" />
-            <input id="otpNewPassword" type="password" class="w-full border rounded px-2 py-1.5" placeholder="New Password" />
+            <input id="otpCode" class="w-full border rounded px-2 py-1.5" placeholder="OTP Code" required />
+            <input id="otpNewPassword" type="password" class="w-full border rounded px-2 py-1.5" placeholder="New Password" required />
             <button type="submit" class="w-full bg-primary text-white py-1.5 rounded">
               Reset Password
             </button>
@@ -454,7 +980,7 @@ function renderLoginSignup() {
           <div>
             <label class="block text-xs font-medium text-slate-700 mb-1">Role</label>
             <select id="signupRole" class="w-full border rounded px-3 py-2 text-sm">
-              <option value="STOCK_MASTER">StockMaster</option>
+              <option value="STOCK_MASTER">Stock Master</option>
               <option value="INVENTORY_MANAGER">Inventory Manager</option>
               <option value="WAREHOUSE_STAFF">Warehouse Staff</option>
             </select>
@@ -469,7 +995,29 @@ function renderLoginSignup() {
   `;
 }
 
+
+// ======================================================
+// ====================== LAYOUT ========================
+// ======================================================
+
 function renderLayout(contentHTML) {
+  const me = state.me;
+  const username = me ? me.name : "User";
+  const role = me ? me.role : "";
+
+  const views = [
+    "dashboard",
+    "products",
+    "receipts",
+    "deliveries",
+    "transfers",
+    "adjustments",
+    "stock",
+    "ledger",
+    "settings",
+    "profile"
+  ];
+
   return `
   <div class="flex min-h-screen">
     <!-- Sidebar -->
@@ -479,13 +1027,19 @@ function renderLayout(contentHTML) {
         <div class="text-xs text-slate-400">Real-time stock control</div>
       </div>
       <nav class="flex-1 px-3 py-3 text-sm space-y-1">
-        ${["dashboard","products","receipts","deliveries","transfers","adjustments","stock","ledger","settings","profile"].map(view => `
-          <button onclick="setView('${view}')" class="w-full text-left px-3 py-2 rounded-md hover:bg-slate-800 ${state.currentView === view ? "bg-primary" : ""}">
+        ${views.map(view => `
+          <button
+            onclick="setView('${view}')"
+            class="w-full text-left px-3 py-2 rounded-md hover:bg-slate-800 ${state.currentView === view ? "bg-primary" : ""}">
             ${view[0].toUpperCase() + view.slice(1)}
           </button>
         `).join("")}
       </nav>
-      <div class="px-4 py-4 border-t border-slate-800">
+      <div class="px-4 py-3 border-t border-slate-800 text-xs">
+        <div class="mb-2">
+          <div class="font-semibold truncate">${username}</div>
+          <div class="text-slate-400">${role}</div>
+        </div>
         <button onclick="logout()" class="w-full bg-red-500 hover:bg-red-600 text-sm py-2 rounded-md">
           Logout
         </button>
@@ -495,8 +1049,12 @@ function renderLayout(contentHTML) {
     <!-- Main -->
     <main class="flex-1 bg-slate-100">
       <header class="h-14 bg-white border-b border-slate-200 flex items-center px-6 justify-between">
-        <div class="font-semibold text-slate-800 text-lg capitalize">${state.currentView}</div>
-        <div class="text-xs text-slate-500">Inventory Managers & Warehouse Staff</div>
+        <div class="font-semibold text-slate-800 text-lg capitalize">
+          ${state.currentView}
+        </div>
+        <div class="text-xs text-slate-500">
+          Inventory Managers & Warehouse Staff
+        </div>
       </header>
       <section class="p-4 sm:p-6">
         ${contentHTML}
@@ -506,526 +1064,67 @@ function renderLayout(contentHTML) {
   `;
 }
 
-// --- Individual views ---
 
-function renderDashboard() {
-  const d = state.dashboard || {
-    lowStock: 0,
-    outOfStock: 0,
-    pendingReceipts: 0,
-    pendingDeliveries: 0,
-    pendingTransfers: 0
-  };
+// ======================================================
+// ===================== MAIN RENDER ====================
+// ======================================================
 
-  return `
-    <h2 class="text-xl font-semibold text-slate-900 mb-2">Dashboard</h2>
-    <p class="text-xs text-slate-500 mb-4">
-      Snapshot of inventory health and operations.
-    </p>
-    <div class="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
-      ${renderKpi("Total Products", state.products.length, "distinct SKUs in catalog")}
-      ${renderKpi("Low Stock", d.lowStock, "at or below reorder point")}
-      ${renderKpi("Out of Stock", d.outOfStock, "no quantity available")}
-      ${renderKpi("Pending Receipts", d.pendingReceipts, "incoming goods")}
-      ${renderKpi("Pending Deliveries", d.pendingDeliveries, "outgoing goods")}
-      ${renderKpi("Transfers Scheduled", d.pendingTransfers, "internal moves")}
-    </div>
-    <div class="bg-white rounded-xl shadow-sm p-4 text-xs text-slate-600">
-      <h3 class="font-semibold text-slate-800 mb-2">Filters / Move History Preview</h3>
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
-        <select id="filterDocType" class="border rounded px-2 py-1.5 text-xs" onchange="updateFilter('docType', this.value)">
-          <option value="ALL">All Docs</option>
-          <option value="RECEIPT">Receipts</option>
-          <option value="DELIVERY">Delivery</option>
-          <option value="TRANSFER">Internal</option>
-          <option value="ADJUSTMENT">Adjustments</option>
-        </select>
-        <select id="filterStatus" class="border rounded px-2 py-1.5 text-xs" onchange="updateFilter('status', this.value)">
-          <option value="ALL">All Statuses</option>
-          <option value="DONE">Done</option>
-        </select>
-        <input id="filterWarehouse" class="border rounded px-2 py-1.5 text-xs" placeholder="Warehouse" onchange="updateFilter('warehouse', this.value)" />
-        <input id="filterCategory" class="border rounded px-2 py-1.5 text-xs" placeholder="Category" onchange="updateFilter('category', this.value)" />
-      </div>
-      <div class="overflow-x-auto max-h-52">
-        <table class="min-w-full text-xs">
-          <thead>
-            <tr class="bg-slate-50">
-              <th class="px-2 py-1 text-left">Type</th>
-              <th class="px-2 py-1 text-left">Product</th>
-              <th class="px-2 py-1 text-left">From</th>
-              <th class="px-2 py-1 text-left">To</th>
-              <th class="px-2 py-1 text-left">Qty</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${filterLedger(state.ledger).slice(0,10).map(row => `
-              <tr class="border-t">
-                <td class="px-2 py-1">${row.type}</td>
-                <td class="px-2 py-1">${row.product}</td>
-                <td class="px-2 py-1">${row.fromLocation || "-"}</td>
-                <td class="px-2 py-1">${row.toLocation || "-"}</td>
-                <td class="px-2 py-1">${row.qty}</td>
-              </tr>
-            `).join("") || `<tr><td colspan="5" class="px-2 py-2 text-center text-slate-400">No movements yet</td></tr>`}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  `;
-}
-
-function renderKpi(title, value, subtitle) {
-  return `
-    <div class="bg-white rounded-xl shadow-sm p-4">
-      <div class="text-xs uppercase text-slate-500 mb-1">${title}</div>
-      <div class="text-2xl font-semibold text-slate-900">${value}</div>
-      <div class="text-xs text-slate-500">${subtitle}</div>
-    </div>
-  `;
-}
-
-function filterLedger(ledger) {
-  return ledger.filter(row => {
-    if (state.filters.docType !== "ALL" && row.type !== state.filters.docType) return false;
-    // status currently always DONE; left to extend later
-    // warehouse filter: we don't store it directly in ledger, but could map via reference if needed
-    return true;
-  });
-}
-
-// Products
-function renderProducts() {
-  return `
-    <div class="flex flex-col md:flex-row gap-4">
-      <div class="flex-1">
-        <h2 class="text-xl font-semibold text-slate-900 mb-2">Products</h2>
-        <p class="text-xs text-slate-500 mb-3">Create and manage SKUs, categories, reorder rules.</p>
-        <div class="overflow-x-auto bg-white rounded-xl shadow-sm">
-          <table class="min-w-full text-xs">
-            <thead class="bg-slate-50">
-              <tr>
-                <th class="px-3 py-2 text-left">Name</th>
-                <th class="px-3 py-2 text-left">SKU</th>
-                <th class="px-3 py-2 text-left">Category</th>
-                <th class="px-3 py-2 text-left">UoM</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${state.products.map(p => `
-                <tr class="border-t">
-                  <td class="px-3 py-1">${p.name}</td>
-                  <td class="px-3 py-1">${p.sku}</td>
-                  <td class="px-3 py-1">${p.category || "-"}</td>
-                  <td class="px-3 py-1">${p.uom}</td>
-                </tr>
-              `).join("") || `<tr><td colspan="4" class="px-3 py-3 text-center text-slate-400">No products</td></tr>`}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <div class="w-full md:w-80 bg-white rounded-xl shadow-sm p-4">
-        <h3 class="text-sm font-semibold text-slate-800 mb-2">Create Product</h3>
-        <form onsubmit="handleCreateProduct(event)" class="space-y-2 text-xs">
-          <div>
-            <label class="block mb-1">Name</label>
-            <input id="prodName" class="w-full border rounded px-2 py-1.5" required />
-          </div>
-          <div>
-            <label class="block mb-1">SKU / Code</label>
-            <input id="prodSku" class="w-full border rounded px-2 py-1.5" required />
-          </div>
-          <div>
-            <label class="block mb-1">Category</label>
-            <input id="prodCategory" class="w-full border rounded px-2 py-1.5" />
-          </div>
-          <div>
-            <label class="block mb-1">Unit of Measure</label>
-            <input id="prodUom" class="w-full border rounded px-2 py-1.5" placeholder="kg, pcs, box..." required />
-          </div>
-          <div class="grid grid-cols-2 gap-2">
-            <div>
-              <label class="block mb-1">Reorder Point</label>
-              <input id="prodReorderPoint" type="number" class="w-full border rounded px-2 py-1.5" />
-            </div>
-            <div>
-              <label class="block mb-1">Reorder Qty</label>
-              <input id="prodReorderQty" type="number" class="w-full border rounded px-2 py-1.5" />
-            </div>
-          </div>
-          <button class="w-full bg-primary text-white py-1.5 rounded mt-2">Save Product</button>
-        </form>
-      </div>
-    </div>
-  `;
-}
-
-// Receipts
-function renderReceipts() {
-  return `
-    <div class="flex flex-col md:flex-row gap-4">
-      <div class="flex-1">
-        <h2 class="text-xl font-semibold text-slate-900 mb-2">Receipts (Incoming)</h2>
-        <p class="text-xs text-slate-500 mb-3">Log incoming goods from vendors; stock will increase when you create a receipt.</p>
-        <div class="overflow-x-auto bg-white rounded-xl shadow-sm">
-          <table class="min-w-full text-xs">
-            <thead class="bg-slate-50">
-              <tr>
-                <th class="px-3 py-2 text-left">Doc No</th>
-                <th class="px-3 py-2 text-left">Supplier</th>
-                <th class="px-3 py-2 text-left">Warehouse</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${state.receipts.map(r => `
-                <tr class="border-t">
-                  <td class="px-3 py-1">${r.docNumber}</td>
-                  <td class="px-3 py-1">${r.supplierName || "-"}</td>
-                  <td class="px-3 py-1">${r.warehouse}</td>
-                </tr>
-              `).join("") || `<tr><td colspan="3" class="px-3 py-3 text-center text-slate-400">No receipts</td></tr>`}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <div class="w-full md:w-80 bg-white rounded-xl shadow-sm p-4">
-        <h3 class="text-sm font-semibold text-slate-800 mb-2">New Receipt</h3>
-        <form onsubmit="handleCreateReceipt(event)" class="space-y-2 text-xs">
-          <input id="rcSupplier" class="w-full border rounded px-2 py-1.5" placeholder="Supplier Name" />
-          <input id="rcDocNumber" class="w-full border rounded px-2 py-1.5" placeholder="Doc Number" required />
-          <input id="rcWarehouse" class="w-full border rounded px-2 py-1.5" placeholder="Warehouse" required />
-          <div class="border-t pt-2 mt-2">
-            <div class="font-semibold mb-1">Line</div>
-            <input id="rcProduct" class="w-full border rounded px-2 py-1.5 mb-1" placeholder="Product SKU" required />
-            <input id="rcLocation" class="w-full border rounded px-2 py-1.5 mb-1" placeholder="Location" required />
-            <div class="grid grid-cols-2 gap-2">
-              <input id="rcQtyOrdered" type="number" class="border rounded px-2 py-1.5" placeholder="Qty Ordered" />
-              <input id="rcQtyReceived" type="number" class="border rounded px-2 py-1.5" placeholder="Qty Received" />
-            </div>
-          </div>
-          <button class="w-full bg-primary text-white py-1.5 rounded mt-2">Save Receipt</button>
-        </form>
-      </div>
-    </div>
-  `;
-}
-
-// Deliveries
-function renderDeliveries() {
-  return `
-    <div class="flex flex-col md:flex-row gap-4">
-      <div class="flex-1">
-        <h2 class="text-xl font-semibold text-slate-900 mb-2">Delivery Orders (Outgoing)</h2>
-        <p class="text-xs text-slate-500 mb-3">When goods leave the warehouse to customers, record a delivery; stock decreases.</p>
-        <div class="overflow-x-auto bg-white rounded-xl shadow-sm">
-          <table class="min-w-full text-xs">
-            <thead class="bg-slate-50">
-              <tr>
-                <th class="px-3 py-2 text-left">Doc No</th>
-                <th class="px-3 py-2 text-left">Customer</th>
-                <th class="px-3 py-2 text-left">Warehouse</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${state.deliveries.map(d => `
-                <tr class="border-t">
-                  <td class="px-3 py-1">${d.docNumber}</td>
-                  <td class="px-3 py-1">${d.customerName || "-"}</td>
-                  <td class="px-3 py-1">${d.warehouse}</td>
-                </tr>
-              `).join("") || `<tr><td colspan="3" class="px-3 py-3 text-center text-slate-400">No deliveries</td></tr>`}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <div class="w-full md:w-80 bg-white rounded-xl shadow-sm p-4">
-        <h3 class="text-sm font-semibold text-slate-800 mb-2">New Delivery</h3>
-        <form onsubmit="handleCreateDelivery(event)" class="space-y-2 text-xs">
-          <input id="dlCustomer" class="w-full border rounded px-2 py-1.5" placeholder="Customer Name" />
-          <input id="dlDocNumber" class="w-full border rounded px-2 py-1.5" placeholder="Doc Number" required />
-          <input id="dlWarehouse" class="w-full border rounded px-2 py-1.5" placeholder="Warehouse" required />
-          <div class="border-t pt-2 mt-2">
-            <div class="font-semibold mb-1">Line</div>
-            <input id="dlProduct" class="w-full border rounded px-2 py-1.5 mb-1" placeholder="Product SKU" required />
-            <input id="dlLocation" class="w-full border rounded px-2 py-1.5 mb-1" placeholder="From Location" required />
-            <div class="grid grid-cols-2 gap-2">
-              <input id="dlQtyPlanned" type="number" class="border rounded px-2 py-1.5" placeholder="Qty Planned" />
-              <input id="dlQtyDelivered" type="number" class="border rounded px-2 py-1.5" placeholder="Qty Delivered" />
-            </div>
-          </div>
-          <button class="w-full bg-primary text-white py-1.5 rounded mt-2">Save Delivery</button>
-        </form>
-      </div>
-    </div>
-  `;
-}
-
-// Transfers
-function renderTransfers() {
-  return `
-    <div class="flex flex-col md:flex-row gap-4">
-      <div class="flex-1">
-        <h2 class="text-xl font-semibold text-slate-900 mb-2">Internal Transfers</h2>
-        <p class="text-xs text-slate-500 mb-3">Move stock between warehouses or racks. Total stock remains same but location changes.</p>
-        <div class="overflow-x-auto bg-white rounded-xl shadow-sm">
-          <table class="min-w-full text-xs">
-            <thead class="bg-slate-50">
-              <tr>
-                <th class="px-3 py-2 text-left">From WH</th>
-                <th class="px-3 py-2 text-left">To WH</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${state.transfers.map(t => `
-                <tr class="border-t">
-                  <td class="px-3 py-1">${t.fromWarehouse}</td>
-                  <td class="px-3 py-1">${t.toWarehouse}</td>
-                </tr>
-              `).join("") || `<tr><td colspan="2" class="px-3 py-3 text-center text-slate-400">No transfers</td></tr>`}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <div class="w-full md:w-80 bg-white rounded-xl shadow-sm p-4">
-        <h3 class="text-sm font-semibold text-slate-800 mb-2">New Transfer</h3>
-        <form onsubmit="handleCreateTransfer(event)" class="space-y-2 text-xs">
-          <div class="grid grid-cols-2 gap-2">
-            <input id="trFromWh" class="border rounded px-2 py-1.5" placeholder="From WH" required />
-            <input id="trToWh" class="border rounded px-2 py-1.5" placeholder="To WH" required />
-          </div>
-          <div class="border-t pt-2 mt-2">
-            <div class="font-semibold mb-1">Line</div>
-            <input id="trProduct" class="w-full border rounded px-2 py-1.5 mb-1" placeholder="Product SKU" required />
-            <div class="grid grid-cols-2 gap-2">
-              <input id="trFromLoc" class="border rounded px-2 py-1.5" placeholder="From Location" required />
-              <input id="trToLoc" class="border rounded px-2 py-1.5" placeholder="To Location" required />
-            </div>
-            <input id="trQty" type="number" class="w-full border rounded px-2 py-1.5 mt-1" placeholder="Qty" />
-          </div>
-          <button class="w-full bg-primary text-white py-1.5 rounded mt-2">Save Transfer</button>
-        </form>
-      </div>
-    </div>
-  `;
-}
-
-// Adjustments
-function renderAdjustments() {
-  return `
-    <div class="flex flex-col md:flex-row gap-4">
-      <div class="flex-1">
-        <h2 class="text-xl font-semibold text-slate-900 mb-2">Stock Adjustments</h2>
-        <p class="text-xs text-slate-500 mb-3">Fix differences between system quantity and physical count (damaged, lost, extra).</p>
-        <div class="overflow-x-auto bg-white rounded-xl shadow-sm">
-          <table class="min-w-full text-xs">
-            <thead class="bg-slate-50">
-              <tr>
-                <th class="px-3 py-2 text-left">Warehouse</th>
-                <th class="px-3 py-2 text-left">Reason</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${state.adjustments.map(a => `
-                <tr class="border-t">
-                  <td class="px-3 py-1">${a.warehouse}</td>
-                  <td class="px-3 py-1">${a.reason || "-"}</td>
-                </tr>
-              `).join("") || `<tr><td colspan="2" class="px-3 py-3 text-center text-slate-400">No adjustments</td></tr>`}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <div class="w-full md:w-80 bg-white rounded-xl shadow-sm p-4">
-        <h3 class="text-sm font-semibold text-slate-800 mb-2">New Adjustment</h3>
-        <form onsubmit="handleCreateAdjustment(event)" class="space-y-2 text-xs">
-          <input id="adWarehouse" class="w-full border rounded px-2 py-1.5" placeholder="Warehouse" required />
-          <input id="adReason" class="w-full border rounded px-2 py-1.5" placeholder="Reason (Optional)" />
-          <div class="border-t pt-2 mt-2">
-            <div class="font-semibold mb-1">Line</div>
-            <input id="adProduct" class="w-full border rounded px-2 py-1.5 mb-1" placeholder="Product SKU" required />
-            <input id="adLocation" class="w-full border rounded px-2 py-1.5 mb-1" placeholder="Location" required />
-            <input id="adCountedQty" type="number" class="w-full border rounded px-2 py-1.5" placeholder="Counted Qty" />
-          </div>
-          <button class="w-full bg-primary text-white py-1.5 rounded mt-2">Save Adjustment</button>
-        </form>
-      </div>
-    </div>
-  `;
-}
-
-// Stock
-function renderStock() {
-  return `
-    <h2 class="text-xl font-semibold text-slate-900 mb-2">Stock by Location</h2>
-    <p class="text-xs text-slate-500 mb-3">Combined view of quantity available per SKU and location.</p>
-    <div class="overflow-x-auto bg-white rounded-xl shadow-sm">
-      <table class="min-w-full text-xs">
-        <thead class="bg-slate-50">
-          <tr>
-            <th class="px-3 py-2 text-left">Product (SKU)</th>
-            <th class="px-3 py-2 text-left">Location</th>
-            <th class="px-3 py-2 text-left">Qty On Hand</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${state.stock.map(s => `
-            <tr class="border-t">
-              <td class="px-3 py-1">${s.product}</td>
-              <td class="px-3 py-1">${s.location}</td>
-              <td class="px-3 py-1">${s.qty}</td>
-            </tr>
-          `).join("") || `<tr><td colspan="3" class="px-3 py-3 text-center text-slate-400">No stock loaded</td></tr>`}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-// Ledger
-function renderLedger() {
-  return `
-    <h2 class="text-xl font-semibold text-slate-900 mb-2">Move History (Ledger)</h2>
-    <p class="text-xs text-slate-500 mb-3">Complete log of all receipts, deliveries, internal transfers and adjustments.</p>
-    <div class="overflow-x-auto bg-white rounded-xl shadow-sm max-h-[500px]">
-      <table class="min-w-full text-xs">
-        <thead class="bg-slate-50">
-          <tr>
-            <th class="px-3 py-2 text-left">Type</th>
-            <th class="px-3 py-2 text-left">Product</th>
-            <th class="px-3 py-2 text-left">From</th>
-            <th class="px-3 py-2 text-left">To</th>
-            <th class="px-3 py-2 text-left">Qty</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${state.ledger.map(l => `
-            <tr class="border-t">
-              <td class="px-3 py-1">${l.type}</td>
-              <td class="px-3 py-1">${l.product}</td>
-              <td class="px-3 py-1">${l.fromLocation || "-"}</td>
-              <td class="px-3 py-1">${l.toLocation || "-"}</td>
-              <td class="px-3 py-1">${l.qty}</td>
-            </tr>
-          `).join("") || `<tr><td colspan="5" class="px-3 py-3 text-center text-slate-400">No ledger rows yet</td></tr>`}
-        </tbody>
-      </table>
-    </div>
-  `;
-}
-
-// Settings (warehouses + locations)
-function renderSettings() {
-  return `
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div class="bg-white rounded-xl shadow-sm p-4">
-        <h3 class="text-sm font-semibold text-slate-800 mb-2">Warehouses</h3>
-        <ul class="text-xs mb-3">
-          ${state.warehouses.map(w => `<li>- ${w.name} (${w.code})</li>`).join("") || "<li class='text-slate-400'>No warehouses</li>"}
-        </ul>
-        <form onsubmit="handleCreateWarehouse(event)" class="space-y-2 text-xs">
-          <input id="whName" class="w-full border rounded px-2 py-1.5" placeholder="Name" required />
-          <input id="whCode" class="w-full border rounded px-2 py-1.5" placeholder="Code" required />
-          <input id="whAddress" class="w-full border rounded px-2 py-1.5" placeholder="Address" />
-          <button class="w-full bg-primary text-white py-1.5 rounded mt-1">Add Warehouse</button>
-        </form>
-      </div>
-
-      <div class="bg-white rounded-xl shadow-sm p-4">
-        <h3 class="text-sm font-semibold text-slate-800 mb-2">Locations</h3>
-        <ul class="text-xs mb-3 max-h-32 overflow-y-auto">
-          ${state.locations.map(l => `<li>- ${l.name} (${l.code}) in ${l.warehouse}</li>`).join("") || "<li class='text-slate-400'>No locations</li>"}
-        </ul>
-        <form onsubmit="handleCreateLocation(event)" class="space-y-2 text-xs">
-          <input id="locName" class="w-full border rounded px-2 py-1.5" placeholder="Name" required />
-          <input id="locCode" class="w-full border rounded px-2 py-1.5" placeholder="Code" required />
-          <input id="locWarehouse" class="w-full border rounded px-2 py-1.5" placeholder="Warehouse" required />
-          <button class="w-full bg-primary text-white py-1.5 rounded mt-1">Add Location</button>
-        </form>
-      </div>
-    </div>
-  `;
-}
-
-// Profile
-function renderProfile() {
-  return `
-    <div class="bg-white rounded-xl shadow-sm p-4 max-w-md">
-      <h2 class="text-xl font-semibold text-slate-900 mb-2">My Profile</h2>
-      <p class="text-xs text-slate-500 mb-3">
-        This is a simple placeholder; you can extend it to load /me if you add that endpoint.
-      </p>
-      <p class="text-sm text-slate-700">
-        Role-based examples:
-        <ul class="list-disc list-inside text-xs mt-1">
-          <li><b>StockMaster</b> – Full access, settings, all warehouses.</li>
-          <li><b>Inventory Manager</b> – Products, receipts, deliveries.</li>
-          <li><b>Warehouse Staff</b> – Transfers, stock count, picks.</li>
-        </ul>
-      </p>
-    </div>
-  `;
-}
-
-// =============== FILTER & VIEW SWITCH HELPERS ==========
-
-function updateFilter(key, value) {
-  state.filters[key] = value;
-  render();
-}
-
-function setView(view) {
-  state.currentView = view;
-  render();
-}
-
-// =============== MAIN RENDER ===========================
-
-async function render() {
+function render() {
   const app = document.getElementById("app");
 
   if (!state.token) {
     app.innerHTML = renderLoginSignup();
-    // small toggle for login/signup tabs
+
+    // Setup tab toggle after DOM inserted
     setTimeout(() => {
       const loginPanel = document.getElementById("loginPanel");
       const signupPanel = document.getElementById("signupPanel");
       const tabLogin = document.getElementById("tabLogin");
       const tabSignup = document.getElementById("tabSignup");
+
+      if (!loginPanel || !signupPanel || !tabLogin || !tabSignup) return;
+
       tabLogin.onclick = () => {
         loginPanel.classList.remove("hidden");
         signupPanel.classList.add("hidden");
-        tabLogin.classList.add("bg-primary","text-white");
-        tabSignup.classList.remove("bg-primary","text-white");
+        tabLogin.classList.add("bg-primary", "text-white");
+        tabSignup.classList.remove("bg-primary", "text-white");
       };
+
       tabSignup.onclick = () => {
         loginPanel.classList.add("hidden");
         signupPanel.classList.remove("hidden");
-        tabSignup.classList.add("bg-primary","text-white");
-        tabLogin.classList.remove("bg-primary","text-white");
+        tabSignup.classList.add("bg-primary", "text-white");
+        tabLogin.classList.remove("bg-primary", "text-white");
       };
     }, 0);
+
     return;
   }
 
   let content = "";
   switch (state.currentView) {
-    case "dashboard": content = renderDashboard(); break;
-    case "products": content = renderProducts(); break;
-    case "receipts": content = renderReceipts(); break;
-    case "deliveries": content = renderDeliveries(); break;
-    case "transfers": content = renderTransfers(); break;
+    case "dashboard":   content = renderDashboard();   break;
+    case "products":    content = renderProducts();    break;
+    case "receipts":    content = renderReceipts();    break;
+    case "deliveries":  content = renderDeliveries();  break;
+    case "transfers":   content = renderTransfers();   break;
     case "adjustments": content = renderAdjustments(); break;
-    case "stock": content = renderStock(); break;
-    case "ledger": content = renderLedger(); break;
-    case "settings": content = renderSettings(); break;
-    case "profile": content = renderProfile(); break;
-    default: content = renderDashboard();
+    case "stock":       content = renderStock();       break;
+    case "ledger":      content = renderLedger();      break;
+    case "settings":    content = renderSettings();    break;
+    case "profile":     content = renderProfile();     break;
+    default:            content = renderDashboard();
   }
 
   app.innerHTML = renderLayout(content);
 }
 
-// =============== INITIAL BOOT ==========================
+
+// ======================================================
+// ======================= BOOT =========================
+// ======================================================
+
 (async function init() {
   if (state.token) {
     await loadAllData();
